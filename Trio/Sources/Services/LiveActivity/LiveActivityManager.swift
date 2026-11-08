@@ -4,6 +4,7 @@ import CoreData
 import Foundation
 import Swinject
 import UIKit
+import WidgetKit
 
 @available(iOS 16.2, *) private struct ActiveActivity {
     let activity: Activity<LiveActivityAttributes>
@@ -70,6 +71,10 @@ final class LiveActivityData: ObservableObject {
     private var currentActivity: ActiveActivity?
 
     private var data = LiveActivityData()
+
+    // Read-only Home Screen widget snapshot state; never used for pump commands.
+    private var lastHomeWidgetReload: Date = .distantPast
+    private var lastHomeWidgetGlucoseDate: Date?
 
     /// A dispatch queue for handling Core Data change notifications.
     private let queue = DispatchQueue(label: "LiveActivityBridge.queue", qos: .userInitiated)
@@ -217,6 +222,7 @@ final class LiveActivityData: ObservableObject {
             await self.loadOverrides()
             await self.loadTempTarget()
             await self.loadDetermination()
+            self.data.iob = self.iobService.currentIOB
             self.loadWidgetItems()
         }
     }
@@ -231,6 +237,56 @@ final class LiveActivityData: ObservableObject {
                     }
                 }
             }
+        }
+    }
+
+    /// Copies display-only data into the existing Trio App Group so the iPhone
+    /// Home Screen widget can show the last known values without opening Trio.
+    /// No data leaves the device and the widget never initiates insulin delivery.
+    @MainActor private func persistHomeWidgetSnapshot(
+        _ content: LiveActivityAttributes.ContentState,
+        glucoseDate: Date
+    ) {
+        guard let suite = Bundle.main.appGroupSuiteName,
+              let shared = UserDefaults(suiteName: suite),
+              let snapshot = try? JSONEncoder().encode(content)
+        else { return }
+
+        shared.set(snapshot, forKey: "lokeyTrio.medium.contentState.v1")
+        shared.set(data.iob != nil, forKey: "lokeyTrio.medium.hasIOB.v1")
+        shared.set(data.determination != nil, forKey: "lokeyTrio.medium.hasCOB.v1")
+
+        // Forecast bounds are sourced from the actual Oref determination,
+        // irrespective of whether forecasts are displayed in Live Activities.
+        // Missing determinations clear earlier forecasts rather than retaining
+        // obsolete predictions.
+        shared.set(data.determination?.minForecast ?? [], forKey: "lokeyTrio.medium.forecastMin.v1")
+        shared.set(data.determination?.maxForecast ?? [], forKey: "lokeyTrio.medium.forecastMax.v1")
+        shared.set(data.determination?.date?.timeIntervalSince1970 ?? 0,
+                   forKey: "lokeyTrio.medium.forecastDate.v1")
+
+        // Green widget chart is a *measured IOB history* and is labelled IOB;
+        // it does not pretend to be a record of delivered insulin.
+        let now = Date()
+        var history = (shared.array(forKey: "lokeyTrio.medium.iobHistory.v1") as? [[String: Double]] ?? [])
+            .filter { (now.timeIntervalSince1970 - ($0["time"] ?? 0)) < 2 * 60 * 60 }
+        if let iob = data.iob {
+            let units = NSDecimalNumber(decimal: iob).doubleValue
+            let lastSample = history.last?["time"] ?? 0
+            if units.isFinite, now.timeIntervalSince1970 - lastSample >= 150 {
+                history.append(["time": now.timeIntervalSince1970, "units": units])
+            }
+        }
+        shared.set(history, forKey: "lokeyTrio.medium.iobHistory.v1")
+
+        // WidgetKit chooses its own update timing; these are best-effort hints.
+        // Refresh on new CGM readings, or periodically for changed IOB/COB.
+        if lastHomeWidgetGlucoseDate != glucoseDate ||
+            now.timeIntervalSince(lastHomeWidgetReload) >= 3 * 60
+        {
+            lastHomeWidgetGlucoseDate = glucoseDate
+            lastHomeWidgetReload = now
+            WidgetCenter.shared.reloadTimelines(ofKind: "LoKeyTrioMedium")
         }
     }
 
@@ -407,23 +463,28 @@ final class LiveActivityData: ObservableObject {
         }
         let prevGlucose = data.glucoseFromPersistence?.dropFirst().first
 
-        guard let determination = data.determination else {
-            debug(.default, "[LiveActivityManager] pushCurrentContent: no determination available")
-            return
-        }
-
         let content = LiveActivityAttributes.ContentState(
             new: bg,
             prev: prevGlucose,
             units: settings.units,
             chart: glucose,
             settings: settings,
-            determination: determination,
+            determination: data.determination,
             iob: data.iob,
             override: data.override,
             tempTarget: data.tempTarget,
             widgetItems: data.widgetItems
         )
+
+        // The Home Screen widget can show glucose even before the user has
+        // configured a pump or generated an Oref determination.
+        persistHomeWidgetSnapshot(content, glucoseDate: bg.date)
+
+        // Keep the existing Live Activity startup requirement unchanged.
+        guard data.determination != nil else {
+            debug(.default, "[LiveActivityManager] pushCurrentContent: no determination available")
+            return
+        }
 
         await pushUpdate(content)
     }
