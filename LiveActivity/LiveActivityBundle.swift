@@ -241,8 +241,11 @@ private struct LoKeyDualChart: View {
             let lowBG = max(40.0, (allBG.min() ?? 70.0) - 20)
             let highBG = max(lowBG + 40, (allBG.max() ?? 180.0) + 20)
             let glucoseHeight = size.height * 0.68
+            // Before Trio has a real Oref prediction, use the entire graph
+            // for measured history rather than showing a mostly empty plot.
+            let displayEnd = ranges.isEmpty ? now : horizonEnd
             func x(_ timestamp: Double) -> CGFloat {
-                CGFloat((timestamp - historyStart) / (horizonEnd - historyStart)) * size.width
+                CGFloat((timestamp - historyStart) / (displayEnd - historyStart)) * size.width
             }
             func y(_ bg: Double) -> CGFloat {
                 CGFloat((highBG - bg) / (highBG - lowBG)) * glucoseHeight
