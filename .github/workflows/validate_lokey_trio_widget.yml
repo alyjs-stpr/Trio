@@ -1,0 +1,49 @@
+name: Validate LoKey Trio Home Widget (no upload)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'LiveActivity/**'
+      - 'Trio/Sources/Services/LiveActivity/**'
+      - 'Trio.xcodeproj/**'
+      - '.github/workflows/validate_lokey_trio_widget.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  simulator-build:
+    name: Compile Trio and medium widget without signing
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Check out feature branch with submodules
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - name: Select matching Xcode version
+        run: sudo xcode-select --switch /Applications/Xcode_26.5.app/Contents/Developer
+      - name: Confirm toolchain
+        run: xcodebuild -version
+      - name: Compile Trio and embedded widget extension (no signing, no TestFlight)
+        run: |
+          xcodebuild \
+            -project Trio.xcodeproj \
+            -scheme Trio \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM=4MC7LCXJ5W \
+            build | tee lokey-widget-build.log
+        shell: bash
+      - name: Upload build diagnostics only
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: lokey-widget-build-log
+          path: lokey-widget-build.log
+          if-no-files-found: ignore
+          retention-days: 7
