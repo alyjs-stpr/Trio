@@ -574,9 +574,21 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
     @MainActor private func publishComplicationSnapshot(_ state: WatchState) {
         guard let session = session, session.isPaired, session.isWatchAppInstalled else { return }
         guard session.activationState == .activated else { return }
-        let message = watchStateToDictionary(from: state)
+        // Keep the Watch face context deliberately minimal. No bolus limits,
+        // presets, forecast state, pump information or treatment commands.
+        guard let glucose = state.currentGlucose,
+              let latest = state.glucoseValues.last?.date else { return }
+        let displayOnly: [String: Any] = [
+            "currentGlucose": glucose,
+            "trend": state.trend ?? "",
+            "delta": state.delta ?? "",
+            "units": state.units.rawValue,
+            "iob": state.iob ?? "",
+            "cob": state.cob ?? "",
+            "glucoseTimestamp": latest.timeIntervalSince1970
+        ]
         do {
-            try session.updateApplicationContext(["loKeyTrioComplication": message])
+            try session.updateApplicationContext(["loKeyTrioComplication": displayOnly])
         } catch {
             debug(.watchManager, "Unable to update read-only complication context: \(error)")
         }
