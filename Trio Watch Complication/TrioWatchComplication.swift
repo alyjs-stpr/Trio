@@ -38,6 +38,15 @@ struct TrioWatchComplicationEntryView: View {
         switch widgetFamily {
         case .accessoryCircular:
             TrioAccessoryCircularView(entry: entry)
+        case .accessoryRectangular:
+            TrioAccessoryRectangularView(entry: entry)
+        case .accessoryInline:
+            Label {
+                Text("Trio")
+            } icon: {
+                Image("ComplicationIcon")
+            }
+            .widgetBackground(backgroundView: Color.clear)
         #if os(watchOS)
             case .accessoryCorner:
                 TrioAccessoryCornerView(entry: entry)
@@ -56,8 +65,12 @@ struct TrioWatchComplicationEntryView: View {
         var entry: TrioWatchComplicationProvider.Entry
 
         var body: some View {
-            Text("")
-                .widgetCurvesContent()
+            // Previously this was Text(""), creating an empty corner face.
+            // Show the app icon and the name instead; no medical data is invented.
+            Image("ComplicationIcon")
+                .resizable()
+                .scaledToFit()
+                .widgetAccentable()
                 .widgetLabel {
                     Text("Trio")
                 }
@@ -65,6 +78,31 @@ struct TrioWatchComplicationEntryView: View {
         }
     }
 #endif
+
+/// Rectangular Complication
+struct TrioAccessoryRectangularView: View {
+    var entry: TrioWatchComplicationProvider.Entry
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image("ComplicationIcon")
+                .resizable()
+                .scaledToFit()
+                .widgetAccentable()
+                .frame(width: 24, height: 24)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Trio")
+                    .font(.headline)
+                    .lineLimit(1)
+                Text("Open Watch App")
+                    .font(.caption2)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .widgetBackground(backgroundView: Color.clear)
+    }
+}
 
 /// Circular Complication
 struct TrioAccessoryCircularView: View {
@@ -88,15 +126,15 @@ struct TrioAccessoryCircularView: View {
             TrioWatchComplicationEntryView(entry: entry)
         }
         .configurationDisplayName("Trio")
-        .description("Displays Trio app icon as complication")
+        .description("Open Trio from circular, corner, rectangular or inline watch-face complications.")
         .supportedFamilies(supportedFamilies)
     }
 
     private var supportedFamilies: [WidgetFamily] {
         #if os(watchOS)
-            return [.accessoryCorner, .accessoryCircular]
+            return [.accessoryCorner, .accessoryCircular, .accessoryRectangular, .accessoryInline]
         #else
-            return [.accessoryCircular]
+            return [.accessoryCircular, .accessoryRectangular, .accessoryInline]
         #endif
     }
 }
