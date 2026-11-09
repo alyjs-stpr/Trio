@@ -51,6 +51,18 @@ jobs:
           plutil -lint 'Trio Watch Complication/Info.plist' 'Trio Watch App/LoKeyWatchApp.entitlements' 'Trio Watch Complication/LoKeyWatchComplication.entitlements'
           grep -Fq 'loKeyTrioComplication' 'Trio Watch App Extension/WatchState.swift'
           grep -Fq 'updateApplicationContext' 'Trio/Sources/Services/WatchManager/AppleWatchManager.swift'
+          # Regression: the Watch must be able to prepare real glucose for
+          # applicationContext when the Watch app is not foreground-reachable.
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path('Trio/Sources/Services/WatchManager/AppleWatchManager.swift').read_text()
+          state_builder = text.split('func setupWatchState() async -> WatchState {', 1)[1].split('        do {', 1)[0]
+          assert 'session.isPaired' in state_builder
+          assert 'session.isWatchAppInstalled' in state_builder
+          assert 'session.isReachable' not in state_builder, 'inactive Watch app wrongly returns empty glucose'
+          assert 'publishComplicationSnapshot(state)' in text
+          assert 'updateApplicationContext' in text
+          PY
           grep -Fq 'CODE_SIGN_ENTITLEMENTS = "Trio Watch App/LoKeyWatchApp.entitlements"' Trio.xcodeproj/project.pbxproj
       - name: Compile complication target for watchOS simulator (no signing or upload)
         shell: bash
