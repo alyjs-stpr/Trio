@@ -1,0 +1,60 @@
+name: Validate Trio Watch Complication (no upload)
+
+on:
+  push:
+    branches:
+      - 'fix/lokey-trio-watch-complication-slots'
+    paths:
+      - 'Trio Watch Complication/**'
+      - '.github/workflows/validate_lokey_trio_watch_complication.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Trio Watch Complication/**'
+      - '.github/workflows/validate_lokey_trio_watch_complication.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  watch-complication:
+    name: Compile watchOS complication without signing
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository and pinned submodules
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - name: Select Xcode 26.5
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.5.app/Contents/Developer
+          xcodebuild -version
+      - name: Verify all supported Watch families are implemented
+        run: |
+          grep -Fq 'case .accessoryCircular:' 'Trio Watch Complication/TrioWatchComplication.swift'
+          grep -Fq 'case .accessoryCorner:' 'Trio Watch Complication/TrioWatchComplication.swift'
+          grep -Fq 'case .accessoryRectangular:' 'Trio Watch Complication/TrioWatchComplication.swift'
+          grep -Fq 'case .accessoryInline:' 'Trio Watch Complication/TrioWatchComplication.swift'
+          xcrun swiftc -frontend -parse 'Trio Watch Complication/TrioWatchComplication.swift'
+      - name: Compile complication target for watchOS simulator (no signing or upload)
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Trio.xcodeproj \
+            -target 'Trio Watch Complication Extension' \
+            -configuration Debug \
+            -sdk watchsimulator \
+            CODE_SIGNING_ALLOWED=NO \
+            build > watch-complication-build.log 2>&1 || { tail -n 130 watch-complication-build.log; exit 1; }
+          tail -n 30 watch-complication-build.log
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: trio-watch-complication-build-log
+          path: watch-complication-build.log
+          if-no-files-found: ignore
+          retention-days: 7
