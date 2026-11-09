@@ -112,13 +112,17 @@ final class LiveActivityData: ObservableObject {
         notificationCenter
             .addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil) { [weak self] _ in
                 Task { @MainActor in
-                    await self?.pushCurrentContent()
+                    // Final reload on backgrounding is the recommended best-effort
+                    // refresh when WidgetKit throttles frequent foreground updates.
+                    await self?.pushCurrentContent(forceWidgetReload: true)
                 }
             }
         notificationCenter
             .addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: nil) { [weak self] _ in
                 Task { @MainActor in
-                    await self?.pushCurrentContent()
+                    // The glucose cache can lag while Trio was suspended.
+                    // Re-read Core Data before publishing the widget state.
+                    await self?.loadGlucose(forceWidgetReload: true)
                 }
             }
         notificationCenter.addObserver(
@@ -205,9 +209,13 @@ final class LiveActivityData: ObservableObject {
     }
 
     /// Sets up the array of glucose data from persistent storage and triggers an update to the live activity.
-    private func loadGlucose() async {
+    private func loadGlucose(forceWidgetReload: Bool = false) async {
         do {
-            data.glucoseFromPersistence = try await fetchAndMapGlucose()
+            let latest = try await fetchAndMapGlucose()
+            data.glucoseFromPersistence = latest
+            // Explicitly publish after the fetch, independent of the
+            // asynchronous Combine notification used for other state changes.
+            await pushCurrentContent(forceWidgetReload: forceWidgetReload)
         } catch {
             debug(
                 .default,
@@ -245,13 +253,24 @@ final class LiveActivityData: ObservableObject {
     /// No data leaves the device and the widget never initiates insulin delivery.
     @MainActor private func persistHomeWidgetSnapshot(
         _ content: LiveActivityAttributes.ContentState,
-        glucoseDate: Date
+        glucoseDate: Date,
+        forceReload: Bool = false
     ) {
         guard let suite = Bundle.main.appGroupSuiteName,
               let shared = UserDefaults(suiteName: suite),
               let snapshot = try? JSONEncoder().encode(content)
         else { return }
 
+        // Atomic App Group file avoids cross-process UserDefaults timing races.
+        // Keep UserDefaults as fallback for prior widget builds.
+        if let sharedDirectory = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: suite) {
+            let snapshotFile = sharedDirectory.appendingPathComponent("LoKeyTrioMediumContentState.v1.json")
+            do {
+                try snapshot.write(to: snapshotFile, options: .atomic)
+            } catch {
+                debug(.default, "[LoKeyTrioWidget] Unable to save snapshot: \(error)")
+            }
+        }
         shared.set(snapshot, forKey: "lokeyTrio.medium.contentState.v1")
         shared.set(data.iob != nil, forKey: "lokeyTrio.medium.hasIOB.v1")
         shared.set(data.determination != nil, forKey: "lokeyTrio.medium.hasCOB.v1")
@@ -281,8 +300,8 @@ final class LiveActivityData: ObservableObject {
 
         // WidgetKit chooses its own update timing; these are best-effort hints.
         // Refresh on new CGM readings, or periodically for changed IOB/COB.
-        if lastHomeWidgetGlucoseDate != glucoseDate ||
-            now.timeIntervalSince(lastHomeWidgetReload) >= 3 * 60
+        if forceReload || lastHomeWidgetGlucoseDate != glucoseDate ||
+            now.timeIntervalSince(lastHomeWidgetReload) >= 10 * 60
         {
             lastHomeWidgetGlucoseDate = glucoseDate
             lastHomeWidgetReload = now
@@ -456,7 +475,7 @@ final class LiveActivityData: ObservableObject {
 }
 
 @available(iOS 16.2, *) extension LiveActivityManager {
-    @MainActor func pushCurrentContent() async {
+    @MainActor func pushCurrentContent(forceWidgetReload: Bool = false) async {
         guard let glucose = data.glucoseFromPersistence, let bg = glucose.first else {
             debug(.default, "[LiveActivityManager] pushCurrentContent: no current glucose data available")
             return
@@ -478,7 +497,7 @@ final class LiveActivityData: ObservableObject {
 
         // The Home Screen widget can show glucose even before the user has
         // configured a pump or generated an Oref determination.
-        persistHomeWidgetSnapshot(content, glucoseDate: bg.date)
+        persistHomeWidgetSnapshot(content, glucoseDate: bg.date, forceReload: forceWidgetReload)
 
         // Keep the existing Live Activity startup requirement unchanged.
         guard data.determination != nil else {
