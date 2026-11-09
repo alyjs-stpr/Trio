@@ -631,8 +631,9 @@ private enum LoKeyWatchComplicationSnapshotStore {
               let glucose = payload["currentGlucose"] as? String,
               glucose != "--", glucose != "", glucose != "0",
               let value = Double(glucose), value.isFinite, value > 0,
-              let readings = payload["glucoseValues"] as? [[String: Any]],
-              let latest = readings.compactMap({ $0["date"] as? TimeInterval }).max(),
+              let latest = (payload["glucoseTimestamp"] as? TimeInterval)
+                    ?? (payload["glucoseValues"] as? [[String: Any]])?
+                        .compactMap({ $0["date"] as? TimeInterval }).max(),
               latest.isFinite,
               latest <= Date().addingTimeInterval(120).timeIntervalSince1970
         else { return }
