@@ -72,11 +72,16 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
             .sink { [weak self] _ in
                 guard let self = self else { return }
                 // Skip if no watch is paired or app not installed
-                guard let session = self.session, session.isPaired, session.isReachable,
+                guard let session = self.session, session.isPaired,
                       session.isWatchAppInstalled else { return }
                 Task {
                     let state = await self.setupWatchState()
-                    await self.sendDataToWatch(state)
+                    // Coalesce latest glucose for the watch face even when the
+                    // Watch app is not open. No treatment-related message is sent.
+                    await self.publishComplicationSnapshot(state)
+                    if session.isReachable {
+                        await self.sendDataToWatch(state)
+                    }
                 }
             }
             .store(in: &subscriptions)
@@ -563,6 +568,20 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
         return dictionary
     }
 
+    /// Latest-value-only, display-only WatchConnectivity context for face
+    /// complications. This uses the existing WatchState serialization but never
+    /// handles incoming treatment requests or touches the pump algorithm.
+    @MainActor private func publishComplicationSnapshot(_ state: WatchState) {
+        guard let session = session, session.isPaired, session.isWatchAppInstalled else { return }
+        guard session.activationState == .activated else { return }
+        let message = watchStateToDictionary(from: state)
+        do {
+            try session.updateApplicationContext(["loKeyTrioComplication": message])
+        } catch {
+            debug(.watchManager, "Unable to update read-only complication context: \(error)")
+        }
+    }
+
     /// Sends the state of type WatchState to the connected Watch
     /// - Parameter state: Current WatchState containing glucose data to be sent
     @MainActor func sendDataToWatch(_ state: WatchState) async {
@@ -591,6 +610,9 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
         // tick has bumped the build-time date.
         var state = state
         state.date = Date()
+        // Also update the Watch face snapshot when a normal Watch state
+        // delivery occurs (IOB/COB and forecast updates included).
+        publishComplicationSnapshot(state)
 
         let message: [String: Any] = watchStateToDictionary(from: state)
 
