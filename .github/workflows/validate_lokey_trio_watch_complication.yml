@@ -29,7 +29,7 @@ jobs:
   watch-complication:
     name: Compile watchOS complication without signing
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Checkout repository and pinned submodules
         uses: actions/checkout@v5
@@ -76,6 +76,22 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build > watch-app-build.log 2>&1 || { grep 'error:' watch-app-build.log | tail -n 30; tail -n 130 watch-app-build.log; exit 1; }
           tail -n 25 watch-app-build.log
+      - name: Compile complete iPhone Trio scheme with Watch bundle (no signing or upload)
+        shell: bash
+        run: |
+          set -o pipefail
+          # The other steps compile the watch targets, but this change also
+          # touches the iPhone WatchConnectivity manager. Verify it builds
+          # together with the embedded watch app, without creating an IPA.
+          xcodebuild \
+            -project Trio.xcodeproj \
+            -scheme Trio \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/LoKeyTrioWatchValidation.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            archive > trio-watch-full-build.log 2>&1 || { grep -E 'error:|BUILD FAILED|failed' trio-watch-full-build.log | tail -n 50; tail -n 120 trio-watch-full-build.log; exit 1; }
+          tail -n 35 trio-watch-full-build.log
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v6
@@ -84,5 +100,6 @@ jobs:
           path: |
             watch-complication-build.log
             watch-app-build.log
+            trio-watch-full-build.log
           if-no-files-found: ignore
           retention-days: 7
