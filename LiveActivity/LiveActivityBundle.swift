@@ -61,19 +61,28 @@ private struct LoKeyMediumProvider: TimelineProvider {
     }
     func getTimeline(in _: Context, completion: @escaping (Timeline<LoKeyMediumEntry>) -> Void) {
         let now = Date()
-        // Re-evaluate staleness even if iOS delays a push-based widget refresh.
-        let entries = [readEntry(at: now), readEntry(at: now.addingTimeInterval(5 * 60))]
-        completion(Timeline(entries: entries, policy: .after(now.addingTimeInterval(10 * 60))))
+        // Prepare future entries so WidgetKit can mark an old reading STALE
+        // without running our extension again. A new glucose reading still
+        // requests an immediate best-effort WidgetCenter timeline reload.
+        let entries = [0, 5, 10, 15, 20, 30].map { minutes in
+            readEntry(at: now.addingTimeInterval(TimeInterval(minutes * 60)))
+        }
+        completion(Timeline(entries: entries, policy: .after(now.addingTimeInterval(20 * 60))))
     }
 
     private func readEntry(at date: Date) -> LoKeyMediumEntry {
         let defaults = LoKeyWidgetStorage.defaults
-        let state: LiveActivityAttributes.ContentState?
-        if let blob = defaults?.data(forKey: LoKeyWidgetStorage.snapshotKey) {
-            state = try? JSONDecoder().decode(LiveActivityAttributes.ContentState.self, from: blob)
+        // Prefer the complete atomic snapshot stored in the App Group container.
+        // Falling back to UserDefaults supports installs made before this fix.
+        let sharedBlob: Data?
+        if let suite = Bundle.main.object(forInfoDictionaryKey: "AppGroupID") as? String,
+           let group = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: suite) {
+            sharedBlob = try? Data(contentsOf: group.appendingPathComponent("LoKeyTrioMediumContentState.v1.json"))
         } else {
-            state = nil
+            sharedBlob = nil
         }
+        let blob = sharedBlob ?? defaults?.data(forKey: LoKeyWidgetStorage.snapshotKey)
+        let state = blob.flatMap { try? JSONDecoder().decode(LiveActivityAttributes.ContentState.self, from: $0) }
 
         let iobHistory = (defaults?.array(forKey: LoKeyWidgetStorage.iobHistoryKey) as? [[String: Double]] ?? [])
             .compactMap { value -> LoKeyIOBSample? in
