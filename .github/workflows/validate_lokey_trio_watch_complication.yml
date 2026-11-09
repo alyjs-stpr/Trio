@@ -6,11 +6,19 @@ on:
       - 'fix/lokey-trio-watch-complication-slots'
     paths:
       - 'Trio Watch Complication/**'
+      - 'Trio Watch App Extension/WatchState.swift'
+      - 'Trio Watch App/**'
+      - 'Trio/Sources/Services/WatchManager/AppleWatchManager.swift'
+      - 'Trio.xcodeproj/project.pbxproj'
       - '.github/workflows/validate_lokey_trio_watch_complication.yml'
   pull_request:
     branches: [main]
     paths:
       - 'Trio Watch Complication/**'
+      - 'Trio Watch App Extension/WatchState.swift'
+      - 'Trio Watch App/**'
+      - 'Trio/Sources/Services/WatchManager/AppleWatchManager.swift'
+      - 'Trio.xcodeproj/project.pbxproj'
       - '.github/workflows/validate_lokey_trio_watch_complication.yml'
   workflow_dispatch:
 
@@ -38,6 +46,12 @@ jobs:
           grep -Fq 'case .accessoryRectangular:' 'Trio Watch Complication/TrioWatchComplication.swift'
           grep -Fq 'case .accessoryInline:' 'Trio Watch Complication/TrioWatchComplication.swift'
           xcrun swiftc -frontend -parse 'Trio Watch Complication/TrioWatchComplication.swift'
+          xcrun swiftc -frontend -parse 'Trio Watch App Extension/WatchState.swift'
+          xcrun swiftc -frontend -parse 'Trio/Sources/Services/WatchManager/AppleWatchManager.swift'
+          plutil -lint 'Trio Watch Complication/Info.plist' 'Trio Watch App/LoKeyWatchApp.entitlements' 'Trio Watch Complication/LoKeyWatchComplication.entitlements'
+          grep -Fq 'loKeyTrioComplication' 'Trio Watch App Extension/WatchState.swift'
+          grep -Fq 'updateApplicationContext' 'Trio/Sources/Services/WatchManager/AppleWatchManager.swift'
+          grep -Fq 'CODE_SIGN_ENTITLEMENTS = "Trio Watch App/LoKeyWatchApp.entitlements"' Trio.xcodeproj/project.pbxproj
       - name: Compile complication target for watchOS simulator (no signing or upload)
         shell: bash
         run: |
@@ -50,11 +64,25 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build > watch-complication-build.log 2>&1 || { tail -n 130 watch-complication-build.log; exit 1; }
           tail -n 30 watch-complication-build.log
+      - name: Compile Watch app and shared data receiver (no signing or upload)
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Trio.xcodeproj \
+            -target 'Trio Watch App' \
+            -configuration Debug \
+            -sdk watchsimulator \
+            CODE_SIGNING_ALLOWED=NO \
+            build > watch-app-build.log 2>&1 || { grep 'error:' watch-app-build.log | tail -n 30; tail -n 130 watch-app-build.log; exit 1; }
+          tail -n 25 watch-app-build.log
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: trio-watch-complication-build-log
-          path: watch-complication-build.log
+          path: |
+            watch-complication-build.log
+            watch-app-build.log
           if-no-files-found: ignore
           retention-days: 7
