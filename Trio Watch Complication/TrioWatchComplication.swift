@@ -6,7 +6,7 @@ import WidgetKit
 // existing, real Trio glucose/IOB/COB values to the Watch app via WatchConnectivity.
 // The Watch app writes a compact snapshot into an on-watch App Group container.
 // This WidgetKit extension never initiates communication, treatment, or dosing.
-private struct LoKeyWatchSnapshot: Codable {
+fileprivate struct LoKeyWatchSnapshot: Codable {
     let glucose: String
     let trend: String
     let delta: String
