@@ -1,6 +1,13 @@
 name: Validate LoKey Trio Home Widget (no upload)
 
 on:
+  push:
+    branches: ['fix/**', 'feature/**']
+    paths:
+      - 'LiveActivity/**'
+      - 'Trio/Sources/Services/LiveActivity/**'
+      - 'Trio.xcodeproj/**'
+      - '.github/workflows/validate_lokey_trio_widget.yml'
   pull_request:
     branches: [main]
     paths:
@@ -27,6 +34,15 @@ jobs:
         run: sudo xcode-select --switch /Applications/Xcode_26.5.app/Contents/Developer
       - name: Confirm toolchain
         run: xcodebuild -version
+      - name: Verify Trio-side glucose handoff source (no signing)
+        run: |
+          # The extension-only build below does not compile the app's manager.
+          # Parse the app-side Swift and assert the refreshed data flow exists.
+          xcrun swiftc -frontend -parse Trio/Sources/Services/LiveActivity/LiveActivityManager.swift
+          grep -Fq 'await self?.loadGlucose(forceWidgetReload: true)' Trio/Sources/Services/LiveActivity/LiveActivityManager.swift
+          grep -Fq 'await pushCurrentContent(forceWidgetReload: forceWidgetReload)' Trio/Sources/Services/LiveActivity/LiveActivityManager.swift
+          grep -Fq 'LoKeyTrioMediumContentState.v1.json' Trio/Sources/Services/LiveActivity/LiveActivityManager.swift
+          grep -Fq 'LoKeyTrioMediumContentState.v1.json' LiveActivity/LiveActivityBundle.swift
       - name: Compile existing WidgetKit extension (no signing, no TestFlight)
         run: |
           set -o pipefail
