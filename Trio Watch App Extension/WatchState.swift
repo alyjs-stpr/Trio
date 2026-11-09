@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import WatchConnectivity
+import WidgetKit
 
 /// WatchState manages the communication between the Watch app and the iPhone app using WatchConnectivity.
 /// It handles glucose data synchronization and sending treatment requests (bolus, carbs) to the phone.
@@ -172,6 +173,9 @@ import WatchConnectivity
             }
 
             if activationState == .activated {
+                if let latest = session.receivedApplicationContext["loKeyTrioComplication"] as? [String: Any] {
+                    LoKeyWatchComplicationSnapshotStore.save(latest)
+                }
                 Task {
                     await WatchLogger.shared.log("⌚️ Watch session activated with state: \(activationState.rawValue)")
                 }
@@ -228,6 +232,13 @@ import WatchConnectivity
         handleIncomingWatchStatePayload(userInfo)
     }
 
+    // Complications receive the latest coalesced, read-only state without
+    // depending on a live Watch app session or building up a large transfer queue.
+    func session(_: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+        guard let latest = applicationContext["loKeyTrioComplication"] as? [String: Any] else { return }
+        LoKeyWatchComplicationSnapshotStore.save(latest)
+    }
+
     /// Shared path for watch-state payloads from either delegate method.
     /// Enforces the freshness contract in one place so the two delivery paths
     /// can't drift.
@@ -258,6 +269,7 @@ import WatchConnectivity
         }
 
         WatchStateSnapshot.saveLatestDateToDisk(date)
+        LoKeyWatchComplicationSnapshotStore.save(payload)
         DispatchQueue.main.async {
             self.scheduleUIUpdate(with: payload)
         }
@@ -583,6 +595,69 @@ import WatchConnectivity
             forecastConeMin = forecastPayload[WatchMessageKeys.forecastConeMin] as? [Double] ?? []
             forecastConeMax = forecastPayload[WatchMessageKeys.forecastConeMax] as? [Double] ?? []
             forecastLines = forecastPayload[WatchMessageKeys.forecastLines] as? [String: [Double]] ?? [:]
+        }
+    }
+}
+
+
+// MARK: - Read-only Watch complication snapshot
+//
+// Runs on the watch. No pump commands, treatment requests, credentials, or
+// bolus data are read/written by this store. Reading timestamp is the actual
+// CGM sample time, NOT the WatchConnectivity send time.
+private struct LoKeyWatchComplicationSnapshot: Codable {
+    let glucose: String
+    let trend: String
+    let delta: String
+    let units: String
+    let iob: String
+    let cob: String
+    let glucoseTimestamp: TimeInterval
+}
+
+private enum LoKeyWatchComplicationSnapshotStore {
+    static let filename = "LoKeyTrioWatchComplication.v1.json"
+    static let widgetKind = "TrioWatchComplication"
+
+    static func fileURL() -> URL? {
+        guard let groupID = Bundle.main.object(forInfoDictionaryKey: "AppGroupID") as? String,
+              !groupID.isEmpty else { return nil }
+        return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupID)?
+            .appendingPathComponent(filename)
+    }
+
+    static func save(_ payload: [String: Any]) {
+        guard let file = fileURL(),
+              let glucose = payload["currentGlucose"] as? String,
+              glucose != "--", glucose != "", glucose != "0",
+              let value = Double(glucose), value.isFinite, value > 0,
+              let latest = (payload["glucoseTimestamp"] as? TimeInterval)
+                    ?? (payload["glucoseValues"] as? [[String: Any]])?
+                        .compactMap({ $0["date"] as? TimeInterval }).max(),
+              latest.isFinite,
+              latest <= Date().addingTimeInterval(120).timeIntervalSince1970
+        else { return }
+
+        // Reject older CGM readings even if the WatchConnectivity message
+        // itself was sent more recently.
+        if let existing = try? Data(contentsOf: file),
+           let prior = try? JSONDecoder().decode(LoKeyWatchComplicationSnapshot.self, from: existing),
+           latest < prior.glucoseTimestamp { return }
+
+        let snapshot = LoKeyWatchComplicationSnapshot(
+            glucose: glucose,
+            trend: payload["trend"] as? String ?? "",
+            delta: payload["delta"] as? String ?? "",
+            units: payload["units"] as? String ?? "mg/dL",
+            iob: payload["iob"] as? String ?? "",
+            cob: payload["cob"] as? String ?? "",
+            glucoseTimestamp: latest
+        )
+        do {
+            try JSONEncoder().encode(snapshot).write(to: file, options: .atomic)
+            WidgetCenter.shared.reloadTimelines(ofKind: widgetKind)
+        } catch {
+            // Do not surface or log glucose values; the watch app remains usable.
         }
     }
 }
