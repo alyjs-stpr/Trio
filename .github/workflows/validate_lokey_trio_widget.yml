@@ -1,13 +1,6 @@
 name: Validate LoKey Trio Home Widget (no upload)
 
 on:
-  push:
-    branches: ['fix/**', 'feature/**']
-    paths:
-      - 'LiveActivity/**'
-      - 'Trio/Sources/Services/LiveActivity/**'
-      - 'Trio.xcodeproj/**'
-      - '.github/workflows/validate_lokey_trio_widget.yml'
   pull_request:
     branches: [main]
     paths:
@@ -16,6 +9,12 @@ on:
       - 'Trio.xcodeproj/**'
       - '.github/workflows/validate_lokey_trio_widget.yml'
   workflow_dispatch:
+
+# Avoid duplicate push + PR simulator builds on the same change.
+# Explicit workflow_dispatch still allows testing before a PR when needed.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
