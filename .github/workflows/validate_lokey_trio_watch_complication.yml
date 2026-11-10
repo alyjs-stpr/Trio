@@ -1,16 +1,6 @@
 name: Validate Trio Watch Complication (no upload)
 
 on:
-  push:
-    branches:
-      - 'fix/lokey-trio-watch-complication-slots'
-    paths:
-      - 'Trio Watch Complication/**'
-      - 'Trio Watch App Extension/WatchState.swift'
-      - 'Trio Watch App/**'
-      - 'Trio/Sources/Services/WatchManager/AppleWatchManager.swift'
-      - 'Trio.xcodeproj/project.pbxproj'
-      - '.github/workflows/validate_lokey_trio_watch_complication.yml'
   pull_request:
     branches: [main]
     paths:
@@ -21,6 +11,12 @@ on:
       - 'Trio.xcodeproj/project.pbxproj'
       - '.github/workflows/validate_lokey_trio_watch_complication.yml'
   workflow_dispatch:
+
+# Avoid duplicate push + PR simulator builds on the same change.
+# Explicit workflow_dispatch still allows testing before a PR when needed.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
